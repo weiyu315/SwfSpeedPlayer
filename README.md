@@ -29,7 +29,7 @@ Windows 產物為 `target/release/ruffle_desktop.exe`，可複製並命名為 `S
 
 倍速會連同音高一起改變。進度條以 SWF 主時間軸定位，互動遊戲與獨立程式音效可能無法任意跳轉。
 
-倍速、跳轉及控制列先前已使用私人素材 `6022.swf` 驗證；該素材不提供下載。`desktop/examples/verify_playback_speed.rs` 是針對這份 12 fps 素材的診斷程式，不是任意 SWF 的通用測試。截圖功能已編譯，尚未實際操作驗證。
+倍速、跳轉及控制列先前已使用私人素材 `6022.swf` 驗證；該素材不提供下載。`desktop/examples/verify_playback_speed.rs` 是針對這份 12 fps 素材的診斷程式，不是任意 SWF 的通用測試。
 
 ## 上游與授權
 
