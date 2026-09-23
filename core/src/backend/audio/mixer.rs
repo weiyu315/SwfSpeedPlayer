@@ -8,6 +8,7 @@ use ruffle_common::buffer::Substream;
 use ruffle_common::duration::FloatDuration;
 use slotmap::SlotMap;
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use swf::AudioCompression;
 
@@ -56,6 +57,7 @@ impl CircBuf {
 /// An `AudioBackend` can forward audio events to the `AudioMixer`, and it will track the state of
 // all sounds and mix the audio into an output buffer audio stream.
 pub struct AudioMixer {
+    playback_rate: Arc<AtomicU64>,
     /// The currently registered sounds.
     sounds: SlotMap<SoundHandle, Sound>,
 
@@ -243,12 +245,23 @@ impl AudioMixer {
     pub fn new(num_output_channels: u8, output_sample_rate: u32) -> Self {
         Self {
             sounds: SlotMap::with_key(),
+            playback_rate: Arc::new(AtomicU64::new(1.0_f64.to_bits())),
             sound_instances: Arc::new(Mutex::new(SlotMap::with_key())),
             volume: Arc::new(RwLock::new(1.0)),
             num_output_channels,
             output_sample_rate,
             output_memory: Arc::new(RwLock::new(CircBuf::new())),
         }
+    }
+
+    pub fn set_playback_rate(&mut self, rate: f64) {
+        if rate.is_finite() && (0.25..=4.0).contains(&rate) {
+            self.playback_rate.store(rate.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    fn with_playback_rate(&self, stream: Box<dyn Stream>) -> Box<dyn Stream> {
+        Box::new(PlaybackStream::new(stream, Arc::clone(&self.playback_rate)))
     }
 
     /// Creates a proxy that may be sent to a different thread.
@@ -566,6 +579,7 @@ impl AudioMixer {
         // movie clip. The stream tag reader will parse through the SWF and
         // feed the decoder audio data on the fly.
         let stream = self.make_stream_from_swf_slice(stream_info, clip_data)?;
+        let stream = self.with_playback_rate(stream);
 
         let mut sound_instances = self
             .sound_instances
@@ -600,6 +614,7 @@ impl AudioMixer {
         };
 
         // Add sound instance to active list.
+        let stream = self.with_playback_rate(stream);
         let mut sound_instances = self
             .sound_instances
             .lock()
@@ -618,6 +633,7 @@ impl AudioMixer {
         // caller. The substream tag reader will feed the decoder audio data
         // from each chunk.
         let stream = self.make_stream_from_buffer_substream(stream_info, stream_data)?;
+        let stream = self.with_playback_rate(stream);
 
         let mut sound_instances = self
             .sound_instances
@@ -876,6 +892,66 @@ impl Stream for EventSoundStream {
     #[inline]
     fn source_sample_rate(&self) -> u16 {
         self.decoder.sample_rate()
+    }
+}
+
+/// Adapt a boxed stream for dasp's generic converter.
+struct BoxedStream(Box<dyn Stream>);
+
+impl dasp::signal::Signal for BoxedStream {
+    type Frame = [i16; 2];
+    fn next(&mut self) -> Self::Frame {
+        self.0.next()
+    }
+    fn is_exhausted(&self) -> bool {
+        self.0.is_exhausted()
+    }
+}
+
+/// Resample the complete sound, including envelopes, at the movie's speed.
+/// Keeping the converter alive preserves fractional position on speed changes.
+struct PlaybackStream {
+    converter: dasp::signal::interpolate::Converter<
+        BoxedStream,
+        dasp::interpolate::linear::Linear<[i16; 2]>,
+    >,
+    rate: Arc<AtomicU64>,
+}
+
+impl PlaybackStream {
+    fn new(mut stream: Box<dyn Stream>, rate: Arc<AtomicU64>) -> Self {
+        let left = stream.next();
+        let right = stream.next();
+        Self {
+            converter: dasp::signal::interpolate::Converter::from_hz_to_hz(
+                BoxedStream(stream),
+                dasp::interpolate::linear::Linear::new(left, right),
+                1.0,
+                1.0,
+            ),
+            rate,
+        }
+    }
+}
+
+impl Stream for PlaybackStream {
+    fn source_position(&self) -> u32 {
+        self.converter.source().0.source_position()
+    }
+    fn source_sample_rate(&self) -> u16 {
+        self.converter.source().0.source_sample_rate()
+    }
+}
+
+impl dasp::signal::Signal for PlaybackStream {
+    type Frame = [i16; 2];
+    fn next(&mut self) -> Self::Frame {
+        self.converter
+            .set_playback_hz_scale(f64::from_bits(self.rate.load(Ordering::Relaxed)));
+        self.converter.next()
+    }
+    fn is_exhausted(&self) -> bool {
+        self.converter.is_exhausted()
     }
 }
 

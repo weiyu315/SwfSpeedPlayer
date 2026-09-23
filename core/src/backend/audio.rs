@@ -181,6 +181,9 @@ pub trait AudioBackend: Any {
     /// implementing it.
     fn set_frame_rate(&mut self, _frame_rate: f64) {}
 
+    /// Set the movie-time / wall-time ratio. Backends may resample audio.
+    fn set_playback_rate(&mut self, _rate: f64) {}
+
     /// The approximate interval that this backend updates a sound's position value. `None` if the
     /// value is unknown.
     ///

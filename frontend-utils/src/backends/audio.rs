@@ -98,6 +98,10 @@ impl CpalAudioBackend {
 impl AudioBackend for CpalAudioBackend {
     impl_audio_mixer_backend!(mixer);
 
+    fn set_playback_rate(&mut self, rate: f64) {
+        self.mixer.set_playback_rate(rate);
+    }
+
     fn play(&mut self) {
         self.stream.play().expect("Error trying to resume CPAL audio stream. This feature may not be supported by your audio device.");
     }

@@ -351,6 +351,7 @@ pub struct Player {
 
     frame_rate: f64,
     forced_frame_rate: bool,
+    playback_rate: f64,
     actions_since_timeout_check: u32,
 
     frame_phase: FramePhase,
@@ -550,6 +551,7 @@ impl Player {
             return;
         }
 
+        let dt = FloatDuration::from_millis(dt.as_millis() * self.playback_rate);
         self.frame_accumulator += dt;
         let frame_duration = self.frame_duration();
 
@@ -633,7 +635,44 @@ impl Player {
             time_til_next = time_til_next.min(FloatDuration::from_millis(time_til_next_timer));
         }
 
-        time_til_next.max(FloatDuration::ZERO).to_std()
+        FloatDuration::from_millis(time_til_next.as_millis().max(0.0) / self.playback_rate).to_std()
+    }
+
+    pub fn playback_rate(&self) -> f64 {
+        self.playback_rate
+    }
+
+    /// Main SWF timeline: current frame, loaded frame count, and frame rate.
+    pub fn timeline_position(&mut self) -> Option<(u16, u16, f64)> {
+        self.mutate_with_update_context(|context| {
+            let clip = context.stage.root_clip()?.as_movie_clip()?;
+            Some((clip.current_frame(), clip.header_frames().min(clip.frames_loaded().max(0) as u16), *context.frame_rate))
+        })
+    }
+
+    /// Seek the main timeline. Timeline stream sounds restart from the target
+    /// frame's SWF audio block, so old audio cannot continue across the jump.
+    pub fn seek_to_frame(&mut self, frame: u16) {
+        self.update(|context| {
+            if let Some(clip) = context.stage.root_clip().and_then(|root| root.as_movie_clip()) {
+                let last = clip.header_frames().min(clip.frames_loaded().max(0) as u16).max(1);
+                let frame = frame.clamp(1, last);
+                if frame != clip.current_frame() {
+                    context.audio_manager.stop_all_sounds(context.audio);
+                    clip.goto_frame(context, GotoInfo { frame, stop_or_play: StopOrPlay::Play });
+                }
+            }
+        });
+        self.frame_accumulator = FloatDuration::ZERO;
+        self.needs_render = true;
+    }
+
+    /// Change the movie clock and audio together, without restarting the movie.
+    pub fn set_playback_rate(&mut self, rate: f64) {
+        if rate.is_finite() && (0.25..=4.0).contains(&rate) {
+            self.audio.set_playback_rate(rate);
+            self.playback_rate = rate;
+        }
     }
 
     pub fn is_playing(&self) -> bool {
@@ -3082,6 +3121,7 @@ impl PlayerBuilder {
                 // Timing
                 frame_rate,
                 forced_frame_rate,
+                playback_rate: 1.0,
                 frame_phase: Default::default(),
                 frame_accumulator: FloatDuration::ZERO,
                 recent_run_frame_timings: VecDeque::with_capacity(10),

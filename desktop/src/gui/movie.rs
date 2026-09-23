@@ -1,4 +1,4 @@
-use crate::gui::MENU_HEIGHT;
+use crate::gui::{CONTROLS_HEIGHT, MENU_HEIGHT};
 use ruffle_render_wgpu::descriptors::Descriptors;
 use ruffle_render_wgpu::target::{RenderTarget, RenderTargetFrame};
 use std::borrow::Cow;
@@ -20,13 +20,18 @@ fn get_vertices(has_menu: bool, height: u32, scale_factor: f64) -> [[f32; 4]; 6]
     } else {
         1.0
     };
+    let bottom = if has_menu {
+        -1.0 + ((CONTROLS_HEIGHT as f64 * scale_factor / height as f64) * 2.0) as f32
+    } else {
+        -1.0
+    };
     // x y u v
     [
         [-1.0, top, 0.0, 0.0],  // tl
         [1.0, top, 1.0, 0.0],   // tr
-        [1.0, -1.0, 1.0, 1.0],  // br
-        [1.0, -1.0, 1.0, 1.0],  // br
-        [-1.0, -1.0, 0.0, 1.0], // bl
+        [1.0, bottom, 1.0, 1.0],  // br
+        [1.0, bottom, 1.0, 1.0],  // br
+        [-1.0, bottom, 0.0, 1.0], // bl
         [-1.0, top, 0.0, 0.0],  // tl
     ]
 }
@@ -179,7 +184,9 @@ impl MovieView {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
@@ -206,6 +213,50 @@ impl MovieView {
             #[cfg(feature = "tracy_images")]
             tracy_frame_captures,
         }
+    }
+
+    /// Read only the movie texture, excluding window chrome and playback controls.
+    pub fn capture_png_frame(&self, descriptors: &Descriptors) -> anyhow::Result<image::RgbaImage> {
+        let size = self.texture.size();
+        let dimensions = ruffle_render_wgpu::utils::BufferDimensions::new(
+            size.width as usize, size.height as usize, wgpu::TextureFormat::Rgba8Unorm,
+        );
+        let buffer = descriptors.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Movie screenshot readback"),
+            size: dimensions.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = descriptors.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture, mip_level: 0,
+                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0, bytes_per_row: Some(dimensions.padded_bytes_per_row), rows_per_image: None,
+                },
+            },
+            size,
+        );
+        let index = descriptors.queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| { let _ = sender.send(result); });
+        descriptors.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: None })?;
+        receiver.recv()??;
+        let mapped = slice.get_mapped_range()?;
+        let mut pixels = Vec::with_capacity(size.width as usize * size.height as usize * 4);
+        for row in mapped.chunks_exact(dimensions.padded_bytes_per_row as usize) {
+            pixels.extend_from_slice(&row[..dimensions.unpadded_bytes_per_row]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        ruffle_render::utils::unmultiply_alpha_rgba(&mut pixels);
+        image::RgbaImage::from_raw(size.width, size.height, pixels)
+            .ok_or_else(|| anyhow::anyhow!("Invalid screenshot dimensions"))
     }
 
     pub fn render(

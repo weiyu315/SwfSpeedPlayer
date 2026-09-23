@@ -1,3 +1,44 @@
+# SWF 影音同步倍速播放器
+
+基於 [Ruffle](https://github.com/ruffle-rs/ruffle) 的 Windows x64 桌面播放器衍生版本，提供繁體中文播放控制。這不是 Ruffle 官方發行版。
+
+## 新增功能
+
+- 開啟本機 `.swf`，以 0.25×、0.5×、0.75×、1×、1.25×、1.5×、1.75×、2×、3×、4× 播放。
+- 聲音、動畫及計時器同步變速。
+- 影片下方的可拖曳進度條，以及加大的播放／暫停符號按鈕。
+- 播放／暫停右侧的截圖按鈕，可另存當前影片畫面為 PNG。
+
+## 下載與使用
+
+發布後，請到**本 Repository 的 Releases** 下載 `SWF-Player-v0.1.0-windows-x64.zip`，解壓縮並執行 `SWF-Player.exe`。
+
+操作方法見 [播放器使用說明](docs/swf-player.md)，功能與驗證狀態見 [版本說明](docs/swf-player-release-notes.md)。下載包不含測試影片。
+
+## 從原始碼建置
+
+先依下方上游文件安裝 Rust 與平台建置相依工具，在本 Repository 根目錄執行：
+
+```powershell
+cargo build --release -p ruffle_desktop
+```
+
+Windows 產物為 `target/release/ruffle_desktop.exe`，可複製並命名為 `SWF-Player.exe`。首次建置需要下載相依套件；已有完整快取時可加 `--offline`。
+
+## 限制與驗證
+
+倍速會連同音高一起改變。進度條以 SWF 主時間軸定位，互動遊戲與獨立程式音效可能無法任意跳轉。
+
+倍速、跳轉及控制列先前已使用私人素材 `6022.swf` 驗證；該素材不提供下載。`desktop/examples/verify_playback_speed.rs` 是針對這份 12 fps 素材的診斷程式，不是任意 SWF 的通用測試。截圖功能已編譯，尚未實際操作驗證。
+
+## 上游與授權
+
+保留 Ruffle 上游的 [LICENSE.md](LICENSE.md) 與各子專案原有授權文件。Ruffle 本身提供 MIT／Apache-2.0 雙授權選擇；相依套件保有各自的授權。
+
+以下保留原始 Ruffle 說明，其中的下載、Issues、贊助與建置徽章連結皆指向上游專案。
+
+---
+
 <p align="center">
   <a href="https://ruffle.rs"><img alt="Ruffle" src="https://ruffle.rs/logo.svg" /></a>
 </p>

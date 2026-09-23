@@ -19,6 +19,8 @@ pub struct MenuBar {
     preferences: GlobalPreferences,
 
     cached_recents: Option<Vec<Recent>>,
+    seek_frame: Option<u16>,
+    seek_was_playing: bool,
     pub currently_opened: Option<(ContentDescriptor, LaunchOptions)>,
 }
 
@@ -42,6 +44,8 @@ impl MenuBar {
             event_loop,
             default_launch_options,
             cached_recents: None,
+            seek_frame: None,
+            seek_was_playing: false,
             currently_opened: None,
             preferences,
         }
@@ -97,11 +101,29 @@ impl MenuBar {
         dialogs: &mut Dialogs,
         mut player: Option<&mut Player>,
     ) {
-        egui::Panel::top("menu_bar").show(egui_ui, |ui| {
+        egui::Panel::top("menu_bar").exact_size(crate::gui::MENU_HEIGHT as f32).show(egui_ui, |ui| {
              egui::MenuBar::new().ui(ui, |ui| {
                 self.file_menu(locale, ui, dialogs, player.is_some());
                 self.view_menu(locale, ui, &mut player);
                 self.controls_menu(locale, ui, dialogs, &mut player);
+                ui.separator();
+                if ui.button("開啟 SWF...").clicked() {
+                    self.browse_and_open(OpenType::File);
+                }
+                if let Some(player) = &mut player {
+                    let mut rate = player.playback_rate();
+                    egui::ComboBox::from_id_salt("playback_speed")
+                        .selected_text(format!("倍速：{rate}x"))
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for option in [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0] {
+                                ui.selectable_value(&mut rate, option, format!("{option}x"));
+                            }
+                        });
+                    if rate != player.playback_rate() {
+                        player.set_playback_rate(rate);
+                    }
+                }
                 ui.menu_button( text(locale, "bookmarks-menu"), |ui| {
                     if Button::new(text(locale, "bookmarks-menu-add")).ui(ui).clicked() {
                         ui.close();
@@ -198,6 +220,119 @@ impl MenuBar {
                 });
             });
         });
+        egui::Panel::bottom("playback_controls")
+            .exact_size(crate::gui::CONTROLS_HEIGHT as f32)
+            .show(egui_ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(player) = &mut player {
+                    let playing = player.is_playing();
+                    let label = if playing { "暫停 (Ctrl+P)" } else { "播放 (Ctrl+P)" };
+                    let response = ui.add(Button::new("").min_size(egui::vec2(44.0, 32.0)))
+                        .on_hover_text(label);
+                    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+                    let center = response.rect.center();
+                    let color = ui.visuals().widgets.inactive.fg_stroke.color;
+                    if playing {
+                        for offset in [-5.0, 5.0] {
+                            ui.painter().rect_filled(egui::Rect::from_center_size(
+                                center + egui::vec2(offset, 0.0), egui::vec2(4.0, 16.0)), 0.0, color);
+                        }
+                    } else {
+                        ui.painter().add(egui::Shape::convex_polygon(vec![
+                            center + egui::vec2(-6.0, -9.0),
+                            center + egui::vec2(-6.0, 9.0),
+                            center + egui::vec2(9.0, 0.0),
+                        ], color, egui::Stroke::NONE));
+                    }
+                    if response.clicked() {
+                        player.set_is_playing(!playing);
+                    }
+                    if ui.add(Button::new("截圖").min_size(egui::vec2(52.0, 32.0)))
+                        .on_hover_text("擷取當前影片畫面並另存為 PNG（不含控制列）")
+                        .clicked()
+                    {
+                        self.save_screenshot(player, dialogs);
+                    }
+                }
+                if let Some(player) = &mut player
+                    && let Some((current, total, fps)) = player.timeline_position()
+                    && total > 1 && fps.is_finite() && fps > 0.0
+                {
+                    ui.label("進度");
+                    let mut frame = self.seek_frame.unwrap_or(current.max(1));
+                    ui.spacing_mut().slider_width = (ui.available_width() - 125.0).max(80.0);
+                    let response = ui.add(egui::Slider::new(&mut frame, 1..=total).show_value(false))
+                        .on_hover_text("拖曳或點擊跳轉；放開後影音同步從新位置播放");
+                    if response.drag_started() {
+                        self.seek_was_playing = player.is_playing();
+                        player.set_is_playing(false);
+                    }
+                    if response.dragged() {
+                        self.seek_frame = Some(frame);
+                    }
+                    if response.drag_stopped() {
+                        player.seek_to_frame(frame);
+                        player.set_is_playing(self.seek_was_playing);
+                        self.seek_frame = None;
+                    } else if response.changed() && !response.dragged() {
+                        player.seek_to_frame(frame);
+                    }
+                    let time = |frame: u16| {
+                        let seconds = (f64::from(frame.saturating_sub(1)) / fps) as u64;
+                        format!("{:02}:{:02}", seconds / 60, seconds % 60)
+                    };
+                    ui.label(format!("{} / {}", time(frame), time(total)));
+                } else {
+                    self.seek_frame = None;
+                    ui.weak("開啟 SWF 後可拖曳進度條");
+                }
+            });
+        });
+    }
+
+    fn save_screenshot(&self, player: &mut Player, dialogs: &Dialogs) {
+        use crate::gui::dialogs::message_dialog::MessageDialogConfiguration;
+        use crate::gui::{DialogDescriptor, LocalizableText, MovieView};
+        use ruffle_render_wgpu::backend::WgpuRenderBackend;
+        use std::any::Any;
+
+        // Capture before opening the save dialog: the saved image is the frame
+        // visible when clicked, even if the movie continues playing afterwards.
+        let result = <dyn Any>::downcast_ref::<WgpuRenderBackend<MovieView>>(player.renderer_mut())
+            .ok_or_else(|| anyhow::anyhow!("無法取得影片畫面"))
+            .and_then(|renderer| renderer.target().capture_png_frame(renderer.descriptors()));
+        let report = {
+            let event_loop = self.event_loop.clone();
+            move |body: String| {
+                let _ = event_loop.send_event(RuffleEvent::OpenDialog(DialogDescriptor::ShowMessage(
+                    MessageDialogConfiguration::new(
+                        LocalizableText::NonLocalizedText("影片截圖".into()),
+                        LocalizableText::NonLocalizedText(body.into()),
+                    ),
+                )));
+            }
+        };
+        let image = match result {
+            Ok(image) => image,
+            Err(error) => { report(format!("截圖失敗：{error}")); return; }
+        };
+        let filename = format!("SWF-截圖-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S-%3f"));
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("儲存影片截圖")
+            .add_filter("PNG 圖片", &["png"])
+            .set_file_name(filename);
+        if let Some(pick) = dialogs.file_picker().show_dialog(dialog, |dialog| dialog.save_file()) {
+            tokio::spawn(async move {
+                let Some(file) = pick.await else { return; };
+                let path = file.path().to_owned();
+                let display_path = path.display().to_string();
+                match tokio::task::spawn_blocking(move || image.save_with_format(path, image::ImageFormat::Png)).await {
+                    Ok(Ok(())) => report(format!("截圖已儲存：\n{display_path}")),
+                    Ok(Err(error)) => report(format!("儲存失敗：{error}")),
+                    Err(error) => report(format!("儲存失敗：{error}")),
+                }
+            });
+        }
     }
 
     fn file_menu(

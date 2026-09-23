@@ -4,7 +4,7 @@ use crate::backends::DesktopUiBackend;
 use crate::custom_event::RuffleEvent;
 use crate::gui::movie::{MovieView, MovieViewRenderer};
 use crate::gui::theme::ThemeController;
-use crate::gui::{MENU_HEIGHT, RuffleGui};
+use crate::gui::{CHROME_HEIGHT, MENU_HEIGHT, RuffleGui};
 use crate::player::{LaunchOptions, PlayerController};
 use crate::preferences::GlobalPreferences;
 use anyhow::anyhow;
@@ -296,18 +296,26 @@ impl GuiController {
         if self.window.fullscreen().is_some() || self.no_gui {
             0.0
         } else {
+            CHROME_HEIGHT as f64 * self.window.scale_factor()
+        }
+    }
+
+    fn movie_top_offset(&self) -> f64 {
+        if self.window.fullscreen().is_some() || self.no_gui {
+            0.0
+        } else {
             MENU_HEIGHT as f64 * self.window.scale_factor()
         }
     }
 
     pub fn window_to_movie_position(&self, position: PhysicalPosition<f64>) -> (f64, f64) {
         let x = position.x;
-        let y = position.y - self.height_offset();
+        let y = position.y - self.movie_top_offset();
         (x, y)
     }
 
     pub fn movie_to_window_position(&self, x: f64, y: f64) -> PhysicalPosition<f64> {
-        let y = y + self.height_offset();
+        let y = y + self.movie_top_offset();
         PhysicalPosition::new(x, y)
     }
 

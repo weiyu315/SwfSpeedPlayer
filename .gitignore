@@ -19,3 +19,12 @@ RECOVER_*.fla
 
 # A developers local Flash Player harness config
 .flash_players.toml
+
+# Local player distribution and private test input (keep upstream SWF fixtures).
+/dist/
+/release-artifacts/
+/SWF-Player.exe
+/SWF-Speed-Player.exe
+/6022.swf
+/.env
+/.env.local

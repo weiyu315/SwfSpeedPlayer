@@ -1,5 +1,5 @@
 use crate::custom_event::{OpenType, RuffleEvent};
-use crate::gui::{GuiController, MENU_HEIGHT};
+use crate::gui::{CHROME_HEIGHT, GuiController};
 use crate::player::{LaunchOptions, PlayerController};
 use crate::preferences::GlobalPreferences;
 use crate::util::{
@@ -271,7 +271,7 @@ impl MainWindow {
         let height_offset = if self.gui.window().fullscreen().is_some() || self.no_gui {
             0.0
         } else {
-            MENU_HEIGHT as f64
+            CHROME_HEIGHT as f64
         };
 
         // To prevent issues like waiting on resize indefinitely (#11364) or desyncing the window state on Windows,
@@ -469,7 +469,7 @@ impl ApplicationHandler<RuffleEvent> for App {
             let min_window_size = if no_gui {
                 (16, 16)
             } else {
-                (350, MENU_HEIGHT + 16)
+                (350, CHROME_HEIGHT + 16)
             }
             .into();
             let preferred_width = self.preferences.cli.width;

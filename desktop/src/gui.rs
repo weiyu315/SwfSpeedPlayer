@@ -34,10 +34,10 @@ use std::sync::{MutexGuard, Weak};
 use std::{fs, mem};
 use winit::event_loop::EventLoopProxy;
 
-/// Size of the top menu bar in pixels.
-/// This is the offset at which the movie will be shown,
-/// and added to the window size if trying to match a movie.
+/// Logical heights reserved above and below the movie.
 pub const MENU_HEIGHT: u32 = 24;
+pub const CONTROLS_HEIGHT: u32 = 40;
+pub const CHROME_HEIGHT: u32 = MENU_HEIGHT + CONTROLS_HEIGHT;
 
 /// The main controller for the Ruffle GUI.
 pub struct RuffleGui {
